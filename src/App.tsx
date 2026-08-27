@@ -1,32 +1,51 @@
-import { useMemo, useRef, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 
 import { MockSuggestionProvider } from './ai/mockProvider';
 import type { SuggestionProvider } from './ai/provider';
 import { DocumentEditor } from './components/DocumentEditor';
 import type { EditorBridge } from './components/DocumentEditor';
+import { HelpModal } from './components/HelpModal';
+import { InfoIcon } from './components/icons';
+import { ModalFrame } from './components/ModalFrame';
 import { computeDiff } from './diff/computeDiff';
-import type { AiSuggestion, DiffSegment, SuggestionScope } from './types';
+import type {
+  AiSuggestion,
+  ContextualAiTrigger,
+  DiffSegment,
+  SuggestionScope,
+} from './types';
 import './App.css';
 
 const initialMarkdown = `# Welcome
 
-Start writing here. Select text or place your caret before asking for a change.`;
+Start writing here. Pause at the cursor or select text to ask for an AI idea.`;
 
-type ModalState =
-  | { kind: 'closed' }
+type AiView =
   | { kind: 'prompt' }
   | { kind: 'loading'; mode: 'initial' | 'refinement' }
   | { kind: 'review' }
   | { kind: 'refine' };
 
+type DialogState =
+  | { kind: 'closed' }
+  | { kind: 'help' }
+  | { kind: 'ai'; view: AiView };
+
+interface PromptCopy {
+  title: string;
+  description: string;
+  label: string;
+  placeholder: string;
+  scopeNote: string;
+  submitLabel: string;
+}
+
 interface PromptViewProps {
+  triggerKind: ContextualAiTrigger['kind'];
   prompt: string;
-  setPrompt: (value: string) => void;
-  scope: SuggestionScope;
-  chooseScope: (kind: SuggestionScope['kind']) => void;
-  selectedMarkdown: string;
   error: string;
   loading: boolean;
+  setPrompt: (value: string) => void;
   onSubmit: () => void;
   onCancel: () => void;
 }
@@ -35,9 +54,9 @@ interface ReviewViewProps {
   suggestion: AiSuggestion;
   diff: DiffSegment[];
   refinementPrompt: string;
-  setRefinementPrompt: (value: string) => void;
   refining: boolean;
   error: string;
+  setRefinementPrompt: (value: string) => void;
   onAccept: () => void;
   onReject: () => void;
   onStartRefine: () => void;
@@ -45,7 +64,7 @@ interface ReviewViewProps {
   onSubmitRefinement: () => void;
 }
 
-/** Coordinates the full-screen editor and the modal suggestion workflow. */
+/** Coordinates the full-screen editor and contextual AI suggestion workflow. */
 function App() {
   const editorRef = useRef<EditorBridge | null>(null);
   const requestId = useRef(0);
@@ -55,57 +74,88 @@ function App() {
     [],
   );
 
-  const [markdown, setMarkdown] = useState(initialMarkdown);
-  const [selectedMarkdown, setSelectedMarkdown] = useState('');
-  const [selectionRange, setSelectionRange] = useState({ from: 0, to: 0 });
+  const [dialog, setDialog] = useState<DialogState>({ kind: 'closed' });
+  const [activeTrigger, setActiveTrigger] =
+    useState<ContextualAiTrigger | null>(null);
   const [contextMarkdown, setContextMarkdown] = useState(initialMarkdown);
-  const [scope, setScope] = useState<SuggestionScope>({ kind: 'document' });
+  const [scope, setScope] = useState<SuggestionScope>({
+    kind: 'insertion',
+    position: 0,
+  });
   const [prompt, setPrompt] = useState('');
   const [refinementPrompt, setRefinementPrompt] = useState('');
-  const [modal, setModal] = useState<ModalState>({ kind: 'closed' });
   const [suggestion, setSuggestion] = useState<AiSuggestion | null>(null);
   const [diff, setDiff] = useState<DiffSegment[]>([]);
   const [error, setError] = useState('');
 
-  /** Captures the current document and defaults scope before opening the dialog. */
-  const openModal = () => {
-    const nextScope: SuggestionScope = selectedMarkdown
-      ? { kind: 'selection', from: selectionRange.from, to: selectionRange.to }
-      : { kind: 'document' };
+  /** Stores the editor bridge without changing identity on parent renders. */
+  const handleEditorReady = useCallback((bridge: EditorBridge) => {
+    editorRef.current = bridge;
+  }, []);
 
-    setContextMarkdown(markdown);
+  /** Opens a scope-specific prompt from an immutable editor snapshot. */
+  const openAiDialog = useCallback((trigger: ContextualAiTrigger) => {
+    const nextScope: SuggestionScope = trigger.kind === 'selection'
+      ? { kind: 'selection', from: trigger.from, to: trigger.to }
+      : { kind: 'insertion', position: trigger.position };
+
+    setActiveTrigger(trigger);
+    setContextMarkdown(trigger.documentMarkdown);
     setScope(nextScope);
     setPrompt('');
     setRefinementPrompt('');
+    setSuggestion(null);
+    setDiff([]);
     setError('');
-    setModal({ kind: 'prompt' });
+    setDialog({ kind: 'ai', view: { kind: 'prompt' } });
     editorRef.current?.setReadOnly(true);
-  };
+  }, []);
 
-  /** Cancels pending work, clears the proposal, and restores editing. */
-  const closeModal = () => {
+  /** Clears an AI session and optionally restores its captured source range. */
+  const closeAiDialog = (restoreCapturedRange = true) => {
+    const triggerToRestore = activeTrigger;
+
+    requestId.current += 1;
     requestController.current?.abort();
     requestController.current = null;
     setSuggestion(null);
     setDiff([]);
     setError('');
-    setModal({ kind: 'closed' });
+    setPrompt('');
+    setRefinementPrompt('');
+    setActiveTrigger(null);
+    setDialog({ kind: 'closed' });
     editorRef.current?.setReadOnly(false);
+
+    if (!restoreCapturedRange || !triggerToRestore) return;
+
+    if (triggerToRestore.kind === 'selection') {
+      editorRef.current?.restoreSelection({
+        from: triggerToRestore.from,
+        to: triggerToRestore.to,
+        direction: triggerToRestore.direction,
+      });
+    } else {
+      editorRef.current?.restoreSelection({
+        from: triggerToRestore.position,
+        to: triggerToRestore.position,
+      });
+    }
   };
 
-  /** Closes the modal, except refinement mode which returns to the active review. */
-  const handleCloseButton = () => {
-    if (modal.kind === 'refine') {
+  /** Returns refinement to review; every other close rejects the AI session. */
+  const handleAiClose = () => {
+    if (dialog.kind === 'ai' && dialog.view.kind === 'refine') {
       setError('');
       setRefinementPrompt('');
-      setModal({ kind: 'review' });
+      setDialog({ kind: 'ai', view: { kind: 'review' } });
       return;
     }
 
-    closeModal();
+    closeAiDialog();
   };
 
-  /** Sends either the initial prompt or the current proposal for refinement. */
+  /** Sends either the captured target or latest proposal to the mock provider. */
   const requestSuggestion = async (
     input: string,
     mode: 'initial' | 'refinement',
@@ -124,7 +174,7 @@ function App() {
           : contextMarkdown;
 
     setError('');
-    setModal({ kind: 'loading', mode });
+    setDialog({ kind: 'ai', view: { kind: 'loading', mode } });
 
     try {
       const proposedMarkdown = await provider.generateSuggestion({
@@ -155,10 +205,8 @@ function App() {
 
       setSuggestion(nextSuggestion);
       setDiff(computeDiff(nextSuggestion.originalMarkdown, proposedMarkdown));
-      if (mode === 'refinement') {
-        setRefinementPrompt('');
-      }
-      setModal({ kind: 'review' });
+      if (mode === 'refinement') setRefinementPrompt('');
+      setDialog({ kind: 'ai', view: { kind: 'review' } });
     } catch (cause) {
       if (
         id !== requestId.current ||
@@ -172,12 +220,15 @@ function App() {
           ? cause.message
           : 'Unable to generate a suggestion.',
       );
-      setModal(mode === 'refinement' ? { kind: 'review' } : { kind: 'prompt' });
+      setDialog({
+        kind: 'ai',
+        view: mode === 'refinement' ? { kind: 'review' } : { kind: 'prompt' },
+      });
     }
   };
 
-  /** Applies the proposal to the selected scope exactly once. */
-  const accept = () => {
+  /** Applies the latest proposal once to its immutable captured scope. */
+  const acceptSuggestion = () => {
     if (!suggestion || !editorRef.current) return;
 
     if (suggestion.scope.kind === 'document') {
@@ -194,24 +245,18 @@ function App() {
       });
     }
 
-    closeModal();
+    closeAiDialog(false);
   };
 
-  /** Updates the active scope while preserving the captured editor context. */
-  const chooseScope = (kind: SuggestionScope['kind']) => {
-    if (kind === 'selection' && !selectedMarkdown) return;
-
-    if (kind === 'selection') {
-      setScope({ kind: 'selection', from: selectionRange.from, to: selectionRange.to });
-    } else if (kind === 'insertion') {
-      setScope({ kind: 'insertion', position: selectionRange.to });
-    } else {
-      setScope({ kind: 'document' });
-    }
-  };
-
-  const isPrompt = modal.kind === 'prompt' || modal.kind === 'loading';
-  const isReview = modal.kind === 'review' || modal.kind === 'refine';
+  const aiView = dialog.kind === 'ai' ? dialog.view : null;
+  const promptCopy = activeTrigger
+    ? getPromptCopy(activeTrigger.kind)
+    : null;
+  const isPrompt =
+    aiView?.kind === 'prompt' ||
+    (aiView?.kind === 'loading' && aiView.mode === 'initial');
+  const isReview = aiView?.kind === 'review' || aiView?.kind === 'refine';
+  const aiTitle = getAiDialogTitle(aiView, promptCopy);
 
   return (
     <main className="app-shell">
@@ -219,136 +264,154 @@ function App() {
         <span className="app-name">CHIRI / MARKDOWN</span>
         <button
           type="button"
-          className="ask-ai-button"
-          onClick={openModal}
-          disabled={modal.kind !== 'closed'}
+          className="header-icon-button"
+          aria-label="Open editor help"
+          title="Help"
+          disabled={dialog.kind !== 'closed'}
+          onClick={() => setDialog({ kind: 'help' })}
         >
-          Ask AI
+          <InfoIcon className="header-icon" />
         </button>
       </header>
 
       <DocumentEditor
         defaultMarkdown={initialMarkdown}
-        onReady={(bridge) => { editorRef.current = bridge; }}
-        onMarkdownChange={setMarkdown}
-        onSelectionChange={(selected, from, to) => {
-          setSelectedMarkdown(selected);
-          setSelectionRange({ from, to });
-        }}
+        contextualActionsEnabled={dialog.kind === 'closed'}
+        onReady={handleEditorReady}
+        onAiTrigger={openAiDialog}
       />
 
-      {modal.kind !== 'closed' && (
-        <div className="modal-backdrop" role="presentation">
-          <section
-            className={`ai-modal ${modal.kind === 'review' ? 'ai-modal-review' : ''}`}
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="modal-title"
-          >
-            <div className="modal-header">
-              <div>
-                <span className="modal-kicker">AI COLLABORATOR</span>
-                <h2 id="modal-title">Suggest a change</h2>
-              </div>
-              <button
-                type="button"
-                className="close-button"
-                onClick={handleCloseButton}
-                aria-label="Close AI dialog"
-              >
-                ×
-              </button>
-            </div>
+      {dialog.kind === 'help' && (
+        <HelpModal onClose={() => setDialog({ kind: 'closed' })} />
+      )}
 
-            {isPrompt && !(modal.kind === 'loading' && modal.mode === 'refinement') && (
-              <PromptView
-                prompt={prompt}
-                setPrompt={setPrompt}
-                scope={scope}
-                chooseScope={chooseScope}
-                selectedMarkdown={selectedMarkdown}
-                error={error}
-                loading={modal.kind === 'loading'}
-                onSubmit={() => void requestSuggestion(prompt.trim(), 'initial')}
-                onCancel={closeModal}
-              />
-            )}
+      {dialog.kind === 'ai' && activeTrigger && promptCopy && (
+        <ModalFrame
+          titleId="ai-modal-title"
+          kicker="AI COLLABORATOR"
+          title={aiTitle}
+          closeLabel="Close AI dialog"
+          className={aiView?.kind === 'review' ? 'ai-modal-review' : ''}
+          onClose={handleAiClose}
+        >
+          {isPrompt && (
+            <PromptView
+              triggerKind={activeTrigger.kind}
+              prompt={prompt}
+              error={error}
+              loading={aiView?.kind === 'loading'}
+              setPrompt={setPrompt}
+              onSubmit={() => void requestSuggestion(prompt.trim(), 'initial')}
+              onCancel={() => closeAiDialog()}
+            />
+          )}
 
-            {modal.kind === 'loading' && modal.mode === 'refinement' && (
+          {aiView?.kind === 'loading' &&
+            aiView.mode === 'refinement' && (
               <div className="modal-body">
                 <p className="modal-loading">Refining the AI suggestion…</p>
               </div>
             )}
 
-            {isReview && suggestion && (
-              <ReviewView
-                suggestion={suggestion}
-                diff={diff}
-                refinementPrompt={refinementPrompt}
-                setRefinementPrompt={setRefinementPrompt}
-                refining={modal.kind === 'refine'}
-                error={error}
-                onAccept={accept}
-                onReject={closeModal}
-                onStartRefine={() => {
-                  setError('');
-                  setRefinementPrompt('');
-                  setModal({ kind: 'refine' });
-                }}
-                onCancelRefine={() => {
-                  setError('');
-                  setRefinementPrompt('');
-                  setModal({ kind: 'review' });
-                }}
-                onSubmitRefinement={() =>
-                  void requestSuggestion(refinementPrompt.trim(), 'refinement')
-                }
-              />
-            )}
-          </section>
-        </div>
+          {isReview && suggestion && (
+            <ReviewView
+              suggestion={suggestion}
+              diff={diff}
+              refinementPrompt={refinementPrompt}
+              refining={aiView?.kind === 'refine'}
+              error={error}
+              setRefinementPrompt={setRefinementPrompt}
+              onAccept={acceptSuggestion}
+              onReject={() => closeAiDialog()}
+              onStartRefine={() => {
+                setError('');
+                setRefinementPrompt('');
+                setDialog({ kind: 'ai', view: { kind: 'refine' } });
+              }}
+              onCancelRefine={() => {
+                setError('');
+                setRefinementPrompt('');
+                setDialog({ kind: 'ai', view: { kind: 'review' } });
+              }}
+              onSubmitRefinement={() =>
+                void requestSuggestion(
+                  refinementPrompt.trim(),
+                  'refinement',
+                )
+              }
+            />
+          )}
+        </ModalFrame>
       )}
     </main>
   );
 }
 
-/** Renders the initial instruction and scope selection form. */
-function PromptView(props: PromptViewProps) {
-  const scopes: Array<{ kind: SuggestionScope['kind']; label: string }> = [
-    { kind: 'selection', label: 'Current selection' },
-    { kind: 'insertion', label: 'Current insertion point' },
-    { kind: 'document', label: 'Whole document' },
-  ];
+/** Returns wording that explains the immutable scope chosen in the editor. */
+function getPromptCopy(kind: ContextualAiTrigger['kind']): PromptCopy {
+  if (kind === 'insertion') {
+    return {
+      title: 'What should come next?',
+      description: 'Describe the idea you want to add at the current cursor.',
+      label: 'What would you like to write next?',
+      placeholder: 'Add a short section explaining...',
+      scopeNote: 'The suggestion will be inserted at your cursor.',
+      submitLabel: 'Generate idea',
+    };
+  }
+
+  return {
+    title: 'Improve this selection',
+    description: 'Tell the AI how you would like to revise the selected text.',
+    label: 'How should this text change?',
+    placeholder: 'Make this clearer and more concise...',
+    scopeNote: 'Only the selected text will be changed.',
+    submitLabel: 'Generate revision',
+  };
+}
+
+/** Chooses the dialog title for prompt, loading, review, and refinement states. */
+function getAiDialogTitle(
+  view: AiView | null,
+  copy: PromptCopy | null,
+): string {
+  if (
+    view?.kind === 'refine' ||
+    (view?.kind === 'loading' && view.mode === 'refinement')
+  ) {
+    return 'Refine suggestion';
+  }
+
+  if (view?.kind === 'review') return 'Review suggestion';
+  return copy?.title ?? 'AI suggestion';
+}
+
+/** Renders a trigger-specific instruction form without editable scope controls. */
+function PromptView({
+  triggerKind,
+  prompt,
+  error,
+  loading,
+  setPrompt,
+  onSubmit,
+  onCancel,
+}: PromptViewProps) {
+  const copy = getPromptCopy(triggerKind);
 
   return (
-    <div className="modal-body">
-      <label htmlFor="ai-prompt">What should change?</label>
+    <div className="modal-body prompt-body">
+      <p className="prompt-description">{copy.description}</p>
+      <label htmlFor="ai-prompt">{copy.label}</label>
       <textarea
         id="ai-prompt"
-        autoFocus
-        value={props.prompt}
-        onChange={(event) => props.setPrompt(event.target.value)}
-        placeholder="Rewrite this in a more professional tone..."
-        disabled={props.loading}
+        data-modal-initial-focus
+        value={prompt}
+        onChange={(event) => setPrompt(event.target.value)}
+        placeholder={copy.placeholder}
+        disabled={loading}
       />
 
-      <fieldset>
-        <legend>Change scope</legend>
-        {scopes.map(({ kind, label }) => (
-          <label className="scope-option" key={kind}>
-            <input
-              type="radio"
-              checked={props.scope.kind === kind}
-              onChange={() => props.chooseScope(kind)}
-              disabled={
-                (kind === 'selection' && !props.selectedMarkdown) || props.loading
-              }
-            />
-            <span>{label}</span>
-          </label>
-        ))}
-      </fieldset>
-
+      <p className="scope-note">{copy.scopeNote}</p>
       <p className="mock-help">
         Offline mock commands: <code>[mock:add]</code>{' '}
         <code>[mock:remove]</code>{' '}
@@ -358,18 +421,22 @@ function PromptView(props: PromptViewProps) {
         <code>[mock:unchanged]</code>
       </p>
 
-      {props.error && <p className="modal-error" role="alert">{props.error}</p>}
+      {error && (
+        <p className="modal-error" role="alert">
+          {error}
+        </p>
+      )}
 
       <div className="modal-actions">
-        <button type="button" className="secondary-button" onClick={props.onCancel}>
+        <button type="button" className="secondary-button" onClick={onCancel}>
           Cancel
         </button>
         <button
           type="button"
-          onClick={props.onSubmit}
-          disabled={!props.prompt.trim() || props.loading}
+          onClick={onSubmit}
+          disabled={!prompt.trim() || loading}
         >
-          {props.loading ? 'Generating…' : 'Generate suggestion'}
+          {loading ? 'Generating…' : copy.submitLabel}
         </button>
       </div>
     </div>
@@ -377,29 +444,52 @@ function PromptView(props: PromptViewProps) {
 }
 
 /** Renders either the proposal diff or the refinement prompt. */
-function ReviewView(props: ReviewViewProps) {
+function ReviewView({
+  suggestion,
+  diff,
+  refinementPrompt,
+  refining,
+  error,
+  setRefinementPrompt,
+  onAccept,
+  onReject,
+  onStartRefine,
+  onCancelRefine,
+  onSubmitRefinement,
+}: ReviewViewProps) {
   return (
     <div className="modal-body review-body">
-      {props.error && <p className="modal-error" role="alert">{props.error}</p>}
+      {error && (
+        <p className="modal-error" role="alert">
+          {error}
+        </p>
+      )}
 
-      {props.refining ? (
+      {refining ? (
         <>
-          <label htmlFor="refinement-prompt">How should the proposal change?</label>
+          <label htmlFor="refinement-prompt">
+            How should the proposal change?
+          </label>
           <textarea
             id="refinement-prompt"
+            data-modal-initial-focus
             autoFocus
-            value={props.refinementPrompt}
-            onChange={(event) => props.setRefinementPrompt(event.target.value)}
+            value={refinementPrompt}
+            onChange={(event) => setRefinementPrompt(event.target.value)}
             placeholder="Make the suggestion shorter..."
           />
           <div className="modal-actions">
-            <button type="button" className="secondary-button" onClick={props.onCancelRefine}>
+            <button
+              type="button"
+              className="secondary-button"
+              onClick={onCancelRefine}
+            >
               Cancel
             </button>
             <button
               type="button"
-              onClick={props.onSubmitRefinement}
-              disabled={!props.refinementPrompt.trim()}
+              onClick={onSubmitRefinement}
+              disabled={!refinementPrompt.trim()}
             >
               Refine suggestion
             </button>
@@ -410,25 +500,35 @@ function ReviewView(props: ReviewViewProps) {
           <div className="diff-columns">
             <DiffColumn
               title="Existing text"
-              segments={props.diff}
+              segments={diff}
               side="original"
-              suggestion={props.suggestion}
+              suggestion={suggestion}
             />
             <DiffColumn
               title="AI suggestion"
-              segments={props.diff}
+              segments={diff}
               side="proposed"
-              suggestion={props.suggestion}
+              suggestion={suggestion}
             />
           </div>
           <div className="modal-actions review-actions">
-            <button type="button" className="secondary-button" onClick={props.onReject}>
+            <button
+              type="button"
+              className="secondary-button"
+              onClick={onReject}
+            >
               Reject
             </button>
-            <button type="button" className="secondary-button" onClick={props.onStartRefine}>
+            <button
+              type="button"
+              className="secondary-button"
+              onClick={onStartRefine}
+            >
               Refine
             </button>
-            <button type="button" onClick={props.onAccept}>Accept</button>
+            <button type="button" onClick={onAccept}>
+              Accept
+            </button>
           </div>
         </>
       )}
@@ -437,25 +537,37 @@ function ReviewView(props: ReviewViewProps) {
 }
 
 /** Renders one side of the original/proposed Markdown comparison. */
-function DiffColumn(props: {
+function DiffColumn({
+  title,
+  segments,
+  side,
+  suggestion,
+}: {
   title: string;
   segments: DiffSegment[];
   side: 'original' | 'proposed';
   suggestion: AiSuggestion;
 }) {
-  const visibleSegments = props.segments.filter((segment) =>
-    props.side === 'original' ? segment.type !== 'added' : segment.type !== 'removed',
+  const visibleSegments = segments.filter((segment) =>
+    side === 'original'
+      ? segment.type !== 'added'
+      : segment.type !== 'removed',
   );
 
   return (
     <div className="diff-column">
-      <h3>{props.title}</h3>
+      <h3>{title}</h3>
       <div className="diff-content">
-        {props.suggestion.scope.kind === 'insertion' && props.side === 'original' ? (
-          <span className="diff-placeholder">Insertion point — no existing text</span>
+        {suggestion.scope.kind === 'insertion' && side === 'original' ? (
+          <span className="diff-placeholder">
+            Insertion point — no existing text
+          </span>
         ) : (
           visibleSegments.map((segment, index) => (
-            <span key={`${segment.type}-${index}`} className={`diff-${segment.type}`}>
+            <span
+              key={`${segment.type}-${index}`}
+              className={`diff-${segment.type}`}
+            >
               {segment.value}
             </span>
           ))

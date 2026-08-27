@@ -2,6 +2,7 @@ import type { SuggestionProvider, SuggestionRequest } from './provider';
 
 /** Offline provider with predictable, scope-aware edits for UI review. */
 export class MockSuggestionProvider implements SuggestionProvider {
+  /** Simulates an abortable AI request and returns scoped Markdown output. */
   generateSuggestion({
     documentMarkdown,
     targetMarkdown,

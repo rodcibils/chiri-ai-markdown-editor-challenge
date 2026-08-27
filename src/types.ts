@@ -4,6 +4,25 @@ export type SuggestionScope =
   | { kind: 'insertion'; position: number }
   | { kind: 'document' };
 
+/** Direction reported by a textarea for its current source selection. */
+export type TextSelectionDirection = 'forward' | 'backward' | 'none';
+
+/** Immutable editor context captured when a contextual AI action is opened. */
+export type ContextualAiTrigger =
+  | {
+      kind: 'insertion';
+      documentMarkdown: string;
+      position: number;
+    }
+  | {
+      kind: 'selection';
+      documentMarkdown: string;
+      selectedMarkdown: string;
+      from: number;
+      to: number;
+      direction: TextSelectionDirection;
+    };
+
 /** A contiguous piece of text in the computed review diff. */
 export type DiffSegment = {
   value: string;
