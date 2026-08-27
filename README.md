@@ -1,75 +1,54 @@
-# React + TypeScript + Vite
+# Chiri AI Document Editor
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+A single-page Markdown editor where users ask a local mock AI collaborator to propose changes to the whole document or a selected passage. Every proposal is shown as an inline diff and must be explicitly accepted or rejected.
 
-Currently, two official plugins are available:
+## Stage 1 features
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+- Milkdown Crepe Markdown editing
+- Whole-document and selection-based suggestions
+- Inline added/removed diff review
+- Accept, reject, and multi-turn refinement
+- Read-only review mode to prevent stale proposals
+- Deterministic offline mock provider
+- Mock error, empty-response, and unchanged-response scenarios
 
-## React Compiler
+## Run locally
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
-
-## Expanding the ESLint configuration
-
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
-
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
-
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
-
+```bash
+npm install
+npm run dev
 ```
 
-You can also install [eslint-plugin-react-x](https://npmx.dev/package/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://npmx.dev/package/eslint-plugin-react-dom) for React-specific lint rules:
+Use a current Node.js LTS release. Stage 1 does not require an API key and makes no AI network requests.
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
+## Test mock states
 
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+Include one of these tokens in the instruction to exercise a state:
 
+- `[mock:error]` - provider failure
+- `[mock:empty]` - empty provider response
+- `[mock:unchanged]` - valid no-change response
+
+Any other instruction returns deterministic Markdown with a visible mock revision. Refinement adds another deterministic revision to the previous proposal.
+
+## Architecture
+
+```text
+Milkdown/Crepe
+  -> Markdown and selection state
+  -> SuggestionProvider interface
+  -> MockSuggestionProvider (Stage 1)
+  -> diffWordsWithSpace
+  -> user review
+  -> explicit accept/reject
 ```
+
+The provider boundary is transport-neutral. Stage 2 can add an OpenRouter implementation without changing the editor, diff, or review workflow.
+
+## Deliberate trade-offs
+
+This showcase keeps state in memory and supports one document and one active proposal. It has no authentication, database, persistence, collaboration protocol, version history, or backend. The mock prioritizes predictable UX testing over semantic AI quality.
+
+## With more time
+
+Add the OpenRouter adapter behind the existing provider interface, then consider server-side key protection, persistence, version history, richer structural diffs, and tracked changes.
