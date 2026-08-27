@@ -36,3 +36,16 @@ export interface AiSuggestion {
   scope: SuggestionScope;
   instructions: string[];
 }
+
+/** One successful AI request committed after its complete session is accepted. */
+export interface AiHistoryEntry {
+  id: string;
+  sequence: number;
+  createdAt: number;
+  prompt: string;
+  inputMarkdown: string;
+  outputMarkdown: string;
+  scope: SuggestionScope;
+  sessionId: string;
+  stepIndex: number;
+}

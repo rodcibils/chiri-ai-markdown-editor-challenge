@@ -1,17 +1,25 @@
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { useCallback, useMemo, useReducer, useRef, useState } from 'react';
 
 import { MockSuggestionProvider } from './ai/mockProvider';
 import type { SuggestionProvider } from './ai/provider';
+import { DocumentHistoryModal } from './components/DocumentHistoryModal';
 import { DocumentEditor } from './components/DocumentEditor';
 import type { EditorBridge } from './components/DocumentEditor';
 import { HelpModal } from './components/HelpModal';
+import { HistoryDetailModal } from './components/HistoryDetailModal';
 import { InfoIcon } from './components/icons';
 import { ModalFrame } from './components/ModalFrame';
-import { computeDiff } from './diff/computeDiff';
+import { SuggestionDiff } from './components/SuggestionDiff';
+import {
+  documentHistoryReducer,
+  findHistoryEntry,
+  initialDocumentHistoryState,
+} from './history/documentHistory';
+import { browserHistoryEnvironment } from './history/historyEnvironment';
 import type {
+  AiHistoryEntry,
   AiSuggestion,
   ContextualAiTrigger,
-  DiffSegment,
   SuggestionScope,
 } from './types';
 import './App.css';
@@ -29,6 +37,12 @@ type AiView =
 type DialogState =
   | { kind: 'closed' }
   | { kind: 'help' }
+  | { kind: 'history-list'; scrollTop: number }
+  | {
+      kind: 'history-detail';
+      entryId: string;
+      listScrollTop: number;
+    }
   | { kind: 'ai'; view: AiView };
 
 interface PromptCopy {
@@ -52,7 +66,6 @@ interface PromptViewProps {
 
 interface ReviewViewProps {
   suggestion: AiSuggestion;
-  diff: DiffSegment[];
   refinementPrompt: string;
   refining: boolean;
   error: string;
@@ -67,14 +80,22 @@ interface ReviewViewProps {
 /** Coordinates the full-screen editor and contextual AI suggestion workflow. */
 function App() {
   const editorRef = useRef<EditorBridge | null>(null);
+  const historyButtonRef = useRef<HTMLButtonElement>(null);
   const requestId = useRef(0);
   const requestController = useRef<AbortController | null>(null);
+  const activeHistorySessionId = useRef<string | null>(null);
+  const nextHistoryStep = useRef(0);
+  const historySequence = useRef(0);
   const provider = useMemo<SuggestionProvider>(
     () => new MockSuggestionProvider(),
     [],
   );
 
   const [dialog, setDialog] = useState<DialogState>({ kind: 'closed' });
+  const [historyState, dispatchHistory] = useReducer(
+    documentHistoryReducer,
+    initialDocumentHistoryState,
+  );
   const [activeTrigger, setActiveTrigger] =
     useState<ContextualAiTrigger | null>(null);
   const [contextMarkdown, setContextMarkdown] = useState(initialMarkdown);
@@ -85,7 +106,6 @@ function App() {
   const [prompt, setPrompt] = useState('');
   const [refinementPrompt, setRefinementPrompt] = useState('');
   const [suggestion, setSuggestion] = useState<AiSuggestion | null>(null);
-  const [diff, setDiff] = useState<DiffSegment[]>([]);
   const [error, setError] = useState('');
 
   /** Stores the editor bridge without changing identity on parent renders. */
@@ -95,37 +115,49 @@ function App() {
 
   /** Opens a scope-specific prompt from an immutable editor snapshot. */
   const openAiDialog = useCallback((trigger: ContextualAiTrigger) => {
+    const sessionId = browserHistoryEnvironment.createId();
     const nextScope: SuggestionScope = trigger.kind === 'selection'
       ? { kind: 'selection', from: trigger.from, to: trigger.to }
       : { kind: 'insertion', position: trigger.position };
 
+    activeHistorySessionId.current = sessionId;
+    nextHistoryStep.current = 0;
+    dispatchHistory({ type: 'start-session', sessionId });
     setActiveTrigger(trigger);
     setContextMarkdown(trigger.documentMarkdown);
     setScope(nextScope);
     setPrompt('');
     setRefinementPrompt('');
     setSuggestion(null);
-    setDiff([]);
     setError('');
     setDialog({ kind: 'ai', view: { kind: 'prompt' } });
     editorRef.current?.setReadOnly(true);
   }, []);
 
   /** Clears an AI session and optionally restores its captured source range. */
-  const closeAiDialog = (restoreCapturedRange = true) => {
+  const closeAiDialog = (
+    restoreCapturedRange = true,
+    discardPendingHistory = true,
+  ) => {
     const triggerToRestore = activeTrigger;
 
     requestId.current += 1;
     requestController.current?.abort();
     requestController.current = null;
     setSuggestion(null);
-    setDiff([]);
     setError('');
     setPrompt('');
     setRefinementPrompt('');
     setActiveTrigger(null);
     setDialog({ kind: 'closed' });
     editorRef.current?.setReadOnly(false);
+
+    if (discardPendingHistory) {
+      // The full initial/refinement chain is visible only after final acceptance.
+      dispatchHistory({ type: 'discard-session' });
+    }
+    activeHistorySessionId.current = null;
+    nextHistoryStep.current = 0;
 
     if (!restoreCapturedRange || !triggerToRestore) return;
 
@@ -153,6 +185,39 @@ function App() {
     }
 
     closeAiDialog();
+  };
+
+  /** Closes either history view and restores focus to its header action. */
+  const closeHistoryDialog = useCallback(() => {
+    setDialog({ kind: 'closed' });
+    window.requestAnimationFrame(() => historyButtonRef.current?.focus());
+  }, []);
+
+  /** Appends one successful provider response to the active pending session. */
+  const recordPendingHistoryStep = (
+    inputMarkdown: string,
+    outputMarkdown: string,
+    submittedPrompt: string,
+    entryScope: SuggestionScope,
+  ) => {
+    const sessionId = activeHistorySessionId.current;
+    if (!sessionId) return;
+
+    historySequence.current += 1;
+    const entry: AiHistoryEntry = {
+      id: browserHistoryEnvironment.createId(),
+      sequence: historySequence.current,
+      createdAt: browserHistoryEnvironment.now(),
+      prompt: submittedPrompt,
+      inputMarkdown,
+      outputMarkdown,
+      scope: entryScope,
+      sessionId,
+      stepIndex: nextHistoryStep.current,
+    };
+
+    nextHistoryStep.current += 1;
+    dispatchHistory({ type: 'append-pending', entry });
   };
 
   /** Sends either the captured target or latest proposal to the mock provider. */
@@ -203,8 +268,13 @@ function App() {
         ],
       };
 
+      recordPendingHistoryStep(
+        targetMarkdown,
+        proposedMarkdown,
+        input,
+        scope,
+      );
       setSuggestion(nextSuggestion);
-      setDiff(computeDiff(nextSuggestion.originalMarkdown, proposedMarkdown));
       if (mode === 'refinement') setRefinementPrompt('');
       setDialog({ kind: 'ai', view: { kind: 'review' } });
     } catch (cause) {
@@ -245,7 +315,8 @@ function App() {
       });
     }
 
-    closeAiDialog(false);
+    dispatchHistory({ type: 'commit-session' });
+    closeAiDialog(false, false);
   };
 
   const aiView = dialog.kind === 'ai' ? dialog.view : null;
@@ -257,21 +328,42 @@ function App() {
     (aiView?.kind === 'loading' && aiView.mode === 'initial');
   const isReview = aiView?.kind === 'review' || aiView?.kind === 'refine';
   const aiTitle = getAiDialogTitle(aiView, promptCopy);
+  const selectedHistoryEntry = dialog.kind === 'history-detail'
+    ? findHistoryEntry(historyState.committed, dialog.entryId)
+    : undefined;
+  const historyCount = historyState.committed.length;
+  const historyButtonLabel = historyCount === 1
+    ? 'Open document history, 1 accepted change'
+    : `Open document history, ${historyCount} accepted changes`;
 
   return (
     <main className="app-shell">
       <header className="app-header">
         <span className="app-name">CHIRI / MARKDOWN</span>
-        <button
-          type="button"
-          className="header-icon-button"
-          aria-label="Open editor help"
-          title="Help"
-          disabled={dialog.kind !== 'closed'}
-          onClick={() => setDialog({ kind: 'help' })}
-        >
-          <InfoIcon className="header-icon" />
-        </button>
+        <div className="header-actions">
+          <button
+            ref={historyButtonRef}
+            type="button"
+            className="history-header-button"
+            aria-label={historyButtonLabel}
+            disabled={dialog.kind !== 'closed'}
+            onClick={() =>
+              setDialog({ kind: 'history-list', scrollTop: 0 })
+            }
+          >
+            <span>Document History</span>
+          </button>
+          <button
+            type="button"
+            className="header-icon-button"
+            aria-label="Open editor help"
+            title="Help"
+            disabled={dialog.kind !== 'closed'}
+            onClick={() => setDialog({ kind: 'help' })}
+          >
+            <InfoIcon className="header-icon" />
+          </button>
+        </div>
       </header>
 
       <DocumentEditor
@@ -283,6 +375,49 @@ function App() {
 
       {dialog.kind === 'help' && (
         <HelpModal onClose={() => setDialog({ kind: 'closed' })} />
+      )}
+
+      {dialog.kind === 'history-list' && (
+        <DocumentHistoryModal
+          entries={historyState.committed}
+          initialScrollTop={dialog.scrollTop}
+          onSelect={(entryId, scrollTop) =>
+            setDialog({
+              kind: 'history-detail',
+              entryId,
+              listScrollTop: scrollTop,
+            })
+          }
+          onClose={closeHistoryDialog}
+        />
+      )}
+
+      {dialog.kind === 'history-detail' && selectedHistoryEntry && (
+        <HistoryDetailModal
+          entry={selectedHistoryEntry}
+          onBack={() =>
+            setDialog({
+              kind: 'history-list',
+              scrollTop: dialog.listScrollTop,
+            })
+          }
+          onClose={closeHistoryDialog}
+        />
+      )}
+
+      {dialog.kind === 'history-detail' && !selectedHistoryEntry && (
+        <DocumentHistoryModal
+          entries={historyState.committed}
+          initialScrollTop={dialog.listScrollTop}
+          onSelect={(entryId, scrollTop) =>
+            setDialog({
+              kind: 'history-detail',
+              entryId,
+              listScrollTop: scrollTop,
+            })
+          }
+          onClose={closeHistoryDialog}
+        />
       )}
 
       {dialog.kind === 'ai' && activeTrigger && promptCopy && (
@@ -316,7 +451,6 @@ function App() {
           {isReview && suggestion && (
             <ReviewView
               suggestion={suggestion}
-              diff={diff}
               refinementPrompt={refinementPrompt}
               refining={aiView?.kind === 'refine'}
               error={error}
@@ -446,7 +580,6 @@ function PromptView({
 /** Renders either the proposal diff or the refinement prompt. */
 function ReviewView({
   suggestion,
-  diff,
   refinementPrompt,
   refining,
   error,
@@ -497,20 +630,15 @@ function ReviewView({
         </>
       ) : (
         <>
-          <div className="diff-columns">
-            <DiffColumn
-              title="Existing text"
-              segments={diff}
-              side="original"
-              suggestion={suggestion}
-            />
-            <DiffColumn
-              title="AI suggestion"
-              segments={diff}
-              side="proposed"
-              suggestion={suggestion}
-            />
-          </div>
+          <SuggestionDiff
+            originalMarkdown={suggestion.originalMarkdown}
+            proposedMarkdown={suggestion.proposedMarkdown}
+            emptyOriginalMessage={
+              suggestion.scope.kind === 'insertion'
+                ? 'Insertion point — no existing text'
+                : undefined
+            }
+          />
           <div className="modal-actions review-actions">
             <button
               type="button"
@@ -532,47 +660,6 @@ function ReviewView({
           </div>
         </>
       )}
-    </div>
-  );
-}
-
-/** Renders one side of the original/proposed Markdown comparison. */
-function DiffColumn({
-  title,
-  segments,
-  side,
-  suggestion,
-}: {
-  title: string;
-  segments: DiffSegment[];
-  side: 'original' | 'proposed';
-  suggestion: AiSuggestion;
-}) {
-  const visibleSegments = segments.filter((segment) =>
-    side === 'original'
-      ? segment.type !== 'added'
-      : segment.type !== 'removed',
-  );
-
-  return (
-    <div className="diff-column">
-      <h3>{title}</h3>
-      <div className="diff-content">
-        {suggestion.scope.kind === 'insertion' && side === 'original' ? (
-          <span className="diff-placeholder">
-            Insertion point — no existing text
-          </span>
-        ) : (
-          visibleSegments.map((segment, index) => (
-            <span
-              key={`${segment.type}-${index}`}
-              className={`diff-${segment.type}`}
-            >
-              {segment.value}
-            </span>
-          ))
-        )}
-      </div>
     </div>
   );
 }
