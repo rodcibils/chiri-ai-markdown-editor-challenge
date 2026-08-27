@@ -150,13 +150,88 @@ describe('App AI workflow', () => {
 
     expect(provider.generateSuggestion).toHaveBeenLastCalledWith(
       expect.objectContaining({
+        operation: 'refinement',
+        documentMarkdown: 'Initial proposal# Test document',
         targetMarkdown: 'Initial proposal',
         instruction: 'Make it shorter',
+        scope: { kind: 'selection', from: 0, to: 16 },
       }),
     );
     await user.click(screen.getByRole('button', { name: 'Reject' }));
     await user.click(screen.getByRole('button', { name: /Open document history/ }));
     expect(screen.getByText(/Accepted AI changes will appear here/)).toBeInTheDocument();
     unmount();
+  });
+
+  it('accepts repeated insertion refinements at the original editor position', async () => {
+    const user = userEvent.setup();
+    const provider = {
+      generateSuggestion: vi
+        .fn()
+        .mockResolvedValueOnce('First proposal')
+        .mockResolvedValueOnce('Second proposal')
+        .mockResolvedValueOnce('Final proposal'),
+    };
+    const historyEnvironment = {
+      now: vi.fn().mockReturnValue(100),
+      createId: vi
+        .fn()
+        .mockReturnValueOnce('session-3')
+        .mockReturnValueOnce('entry-initial')
+        .mockReturnValueOnce('entry-refinement-1')
+        .mockReturnValueOnce('entry-refinement-2'),
+    };
+
+    render(
+      <App
+        suggestionProvider={provider}
+        historyEnvironment={historyEnvironment}
+        initialMarkdown="# Test document"
+      />,
+    );
+    await user.click(screen.getByRole('button', { name: 'Ask AI at cursor' }));
+    await user.type(
+      screen.getByLabelText('What would you like to write next?'),
+      'Initial prompt',
+    );
+    await user.click(screen.getByRole('button', { name: 'Generate idea' }));
+    await screen.findByText('First proposal');
+
+    await user.click(screen.getByRole('button', { name: 'Refine' }));
+    await user.type(
+      screen.getByLabelText('How should the proposal change?'),
+      'First refinement',
+    );
+    await user.click(screen.getByRole('button', { name: 'Refine suggestion' }));
+    await screen.findByText('Second proposal');
+
+    await user.click(screen.getByRole('button', { name: 'Refine' }));
+    await user.type(
+      screen.getByLabelText('How should the proposal change?'),
+      'Final refinement',
+    );
+    await user.click(screen.getByRole('button', { name: 'Refine suggestion' }));
+    await screen.findByText('Final proposal');
+
+    expect(provider.generateSuggestion).toHaveBeenNthCalledWith(
+      3,
+      expect.objectContaining({
+        operation: 'refinement',
+        documentMarkdown: 'Second proposal# Test document',
+        targetMarkdown: 'Second proposal',
+        scope: { kind: 'selection', from: 0, to: 15 },
+      }),
+    );
+
+    await user.click(screen.getByRole('button', { name: 'Accept' }));
+    expect(mocks.bridge.replaceSelection).toHaveBeenCalledWith(
+      'Final proposal',
+      { from: 0, to: 0 },
+    );
+
+    await user.click(screen.getByRole('button', { name: /Open document history/ }));
+    expect(screen.getByText('Initial prompt')).toBeInTheDocument();
+    expect(screen.getByText('First refinement')).toBeInTheDocument();
+    expect(screen.getByText('Final refinement')).toBeInTheDocument();
   });
 });

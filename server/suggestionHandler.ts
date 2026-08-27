@@ -3,6 +3,7 @@ import type { RequestHandler, Response } from 'express';
 import { OpenRouterUpstreamError } from './openRouterClient.js';
 import type {
   ServerSuggestionRequest,
+  ServerSuggestionOperation,
   ServerSuggestionScope,
   SuggestionGenerationClient,
 } from './types.js';
@@ -72,12 +73,16 @@ export function parseSuggestionRequest(value: unknown): ParseResult {
   const documentMarkdown = readString(value.documentMarkdown);
   const targetMarkdown = readString(value.targetMarkdown);
   const instruction = readString(value.instruction)?.trim();
+  const operation = readOperation(value.operation);
   if (
     documentMarkdown === undefined ||
     targetMarkdown === undefined ||
     instruction === undefined
   ) {
     return failure(400, 'Document, target, and instruction are required.');
+  }
+  if (!operation) {
+    return failure(400, 'A valid suggestion operation is required.');
   }
   if (!instruction) return failure(400, 'Instruction cannot be empty.');
   if (documentMarkdown.length > MAX_DOCUMENT_LENGTH) {
@@ -90,12 +95,18 @@ export function parseSuggestionRequest(value: unknown): ParseResult {
     return failure(413, 'Suggestion request is too large to process.');
   }
 
-  const scope = parseScope(value.scope, documentMarkdown, targetMarkdown);
+  const scope = parseScope(
+    value.scope,
+    documentMarkdown,
+    targetMarkdown,
+    operation,
+  );
   if (!scope.ok) return scope;
 
   return {
     ok: true,
     value: {
+      operation,
       documentMarkdown,
       targetMarkdown,
       instruction,
@@ -123,6 +134,7 @@ function parseScope(
   value: unknown,
   documentMarkdown: string,
   targetMarkdown: string,
+  operation: ServerSuggestionOperation,
 ): { ok: true; value: ServerSuggestionScope } | ParseFailure {
   if (!isRecord(value) || typeof value.kind !== 'string') {
     return failure(400, 'A valid suggestion scope is required.');
@@ -133,6 +145,9 @@ function parseScope(
       : failure(400, 'Document scope target does not match the document.');
   }
   if (value.kind === 'insertion') {
+    if (operation === 'refinement') {
+      return failure(400, 'Refinement scope must target existing text.');
+    }
     return isOffset(value.position) && value.position <= documentMarkdown.length
       ? targetMarkdown === ''
         ? { ok: true, value: { kind: 'insertion', position: value.position } }
@@ -152,6 +167,11 @@ function parseScope(
       : failure(400, 'Selection scope range is invalid.');
   }
   return failure(400, 'A valid suggestion scope is required.');
+}
+
+/** Accepts only a supported initial-generation or refinement operation. */
+function readOperation(value: unknown): ServerSuggestionOperation | undefined {
+  return value === 'initial' || value === 'refinement' ? value : undefined;
 }
 
 /** Sends a compact parser failure with no model/provider details. */

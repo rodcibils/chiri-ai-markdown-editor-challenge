@@ -1,7 +1,12 @@
 import type { SuggestionScope } from '../types';
 
+/** Identifies whether the model starts from source text or a prior proposal. */
+export type SuggestionOperation = 'initial' | 'refinement';
+
 /** Input shared by offline and future network-backed suggestion providers. */
 export interface SuggestionRequest {
+  /** Stage of the suggestion workflow represented by this request. */
+  operation: SuggestionOperation;
   /** Complete document, retained as context for the model. */
   documentMarkdown: string;
   /** Exact text the provider is allowed to revise or replace. */

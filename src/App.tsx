@@ -1,6 +1,7 @@
 import { useCallback, useMemo, useReducer, useRef, useState } from 'react';
 
 import { HttpSuggestionProvider } from './ai/httpProvider';
+import { buildSuggestionRequest } from './ai/buildSuggestionRequest';
 import type { SuggestionProvider } from './ai/provider';
 import { DocumentHistoryModal } from './components/DocumentHistoryModal';
 import { DocumentEditor } from './components/DocumentEditor';
@@ -249,25 +250,23 @@ function App({
     requestController.current?.abort();
     requestController.current = controller;
 
-    const targetMarkdown = mode === 'refinement'
-      ? suggestion?.proposedMarkdown ?? ''
-      : scope.kind === 'selection'
-        ? contextMarkdown.slice(scope.from, scope.to)
-        : scope.kind === 'insertion'
-          ? ''
-          : contextMarkdown;
+    const providerRequest = buildSuggestionRequest({
+      operation: mode === 'initial' ? 'initial' : 'refinement',
+      documentMarkdown: contextMarkdown,
+      instruction: input,
+      applicationScope: scope,
+      workingMarkdown: suggestion?.proposedMarkdown,
+      signal: controller.signal,
+    });
+    const targetMarkdown = providerRequest.targetMarkdown;
 
     setError('');
     setDialog({ kind: 'ai', view: { kind: 'loading', mode } });
 
     try {
-      const proposedMarkdown = await provider.generateSuggestion({
-        documentMarkdown: contextMarkdown,
-        targetMarkdown,
-        instruction: input,
-        scope,
-        signal: controller.signal,
-      });
+      const proposedMarkdown = await provider.generateSuggestion(
+        providerRequest,
+      );
 
       if (id !== requestId.current) return;
       if (!proposedMarkdown.trim()) {

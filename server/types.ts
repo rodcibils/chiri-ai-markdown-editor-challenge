@@ -4,8 +4,12 @@ export type ServerSuggestionScope =
   | { kind: 'insertion'; position: number }
   | { kind: 'selection'; from: number; to: number };
 
+/** Stage of the suggestion workflow represented by a server request. */
+export type ServerSuggestionOperation = 'initial' | 'refinement';
+
 /** Validated request exchanged between the route and OpenRouter client. */
 export interface ServerSuggestionRequest {
+  operation: ServerSuggestionOperation;
   documentMarkdown: string;
   targetMarkdown: string;
   instruction: string;

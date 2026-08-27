@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { HttpSuggestionProvider } from '../../src/ai/httpProvider';
 
 const request = {
+  operation: 'initial' as const,
   documentMarkdown: '# Document',
   targetMarkdown: '',
   instruction: 'Continue the document.',
@@ -27,6 +28,14 @@ describe('HttpSuggestionProvider', () => {
       '/api/suggestions',
       expect.objectContaining({ method: 'POST' }),
     );
+    const serializedBody = fetchMock.mock.calls[0]?.[1]?.body;
+    expect(JSON.parse(String(serializedBody))).toEqual({
+      operation: 'initial',
+      documentMarkdown: '# Document',
+      targetMarkdown: '',
+      instruction: 'Continue the document.',
+      scope: { kind: 'insertion', position: 10 },
+    });
   });
 
   it('surfaces safe server errors and rejects empty suggestions', async () => {

@@ -12,6 +12,7 @@ const config = {
 };
 
 const suggestionRequest = {
+  operation: 'initial' as const,
   documentMarkdown: '# Notes',
   targetMarkdown: '# Notes',
   instruction: 'Improve the title.',

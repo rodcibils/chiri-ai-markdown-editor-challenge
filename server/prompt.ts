@@ -15,6 +15,11 @@ export function buildOpenRouterMessages(request: ServerSuggestionRequest) {
     'USER INSTRUCTION',
     request.instruction,
     '',
+    'OPERATION',
+    request.operation === 'refinement'
+      ? 'Refine the latest AI proposal supplied as the target.'
+      : 'Create an initial suggestion for the supplied target.',
+    '',
     'SCOPE',
     scopeDescription,
     '',

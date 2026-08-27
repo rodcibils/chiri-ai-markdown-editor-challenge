@@ -17,6 +17,7 @@ export class HttpSuggestionProvider implements SuggestionProvider {
   /** Sends a JSON-safe request and returns only the generated Markdown. */
   async generateSuggestion(request: SuggestionRequest): Promise<string> {
     const body: SuggestionApiRequest = {
+      operation: request.operation,
       documentMarkdown: request.documentMarkdown,
       targetMarkdown: request.targetMarkdown,
       instruction: request.instruction,

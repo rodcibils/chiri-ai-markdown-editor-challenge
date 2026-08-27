@@ -5,6 +5,7 @@ import type { SuggestionRequest } from '../../src/ai/provider';
 
 const request = (instruction: string, targetMarkdown = 'Original text'):
   SuggestionRequest => ({
+    operation: 'initial',
     documentMarkdown: `# Document\n\n${targetMarkdown}`,
     targetMarkdown,
     instruction,
