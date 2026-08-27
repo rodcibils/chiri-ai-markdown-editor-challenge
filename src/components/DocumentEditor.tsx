@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
 import { Crepe, CrepeFeature } from '@milkdown/crepe'
-import { replaceAll } from '@milkdown/kit/utils'
 
 /** Imperative operations the parent needs after the split editor has mounted. */
 export interface EditorBridge {
@@ -14,9 +13,13 @@ export interface EditorBridge {
 
 /** Props used to synchronize the raw Markdown editor and rendered preview. */
 interface Props {
+  /** Markdown loaded when the editor is first mounted. */
   defaultMarkdown: string
+  /** Called once the preview is ready for imperative updates. */
   onReady(bridge: EditorBridge): void
+  /** Called whenever the source textarea changes. */
   onMarkdownChange(markdown: string): void
+  /** Called when the user selects text or moves the caret. */
   onSelectionChange(markdown: string, from: number, to: number): void
 }
 
@@ -30,21 +33,21 @@ export function DocumentEditor({
   const previewRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const callbacks = useRef({ onMarkdownChange, onSelectionChange })
-  const crepeRef = useRef<Crepe | null>(null)
-  const previewReady = useRef(false)
   const [rawMarkdown, setRawMarkdown] = useState(defaultMarkdown)
   const [readOnly, setReadOnly] = useState(false)
 
   useEffect(() => {
+    // Keep callbacks current without recreating the Crepe instance on every render.
     callbacks.current = { onMarkdownChange, onSelectionChange }
   }, [onMarkdownChange, onSelectionChange])
 
   useEffect(() => {
+    // Crepe is used only as a renderer; all editing happens in the textarea.
     if (!previewRef.current) return
 
     const crepe = new Crepe({
       root: previewRef.current,
-      defaultValue: defaultMarkdown,
+      defaultValue: rawMarkdown,
       features: {
         [CrepeFeature.Cursor]: false,
         [CrepeFeature.ListItem]: false,
@@ -60,26 +63,22 @@ export function DocumentEditor({
         [CrepeFeature.AI]: false,
       },
     })
-    crepeRef.current = crepe
-
     let active = true
     void crepe.create().then(() => {
       if (!active) return
 
-      previewReady.current = true
       crepe.setReadonly(true)
       onReady({
         replaceDocument: (value) => {
           setRawMarkdown(value)
           callbacks.current.onMarkdownChange(value)
-          crepe.editor.action(replaceAll(value))
         },
         replaceSelection: (value, range) => {
+          // String offsets are stable for the raw Markdown source and support insertion ranges.
           const current = textareaRef.current?.value ?? ''
           const next = `${current.slice(0, range.from)}${value}${current.slice(range.to)}`
           setRawMarkdown(next)
           callbacks.current.onMarkdownChange(next)
-          crepe.editor.action(replaceAll(next))
         },
         setReadOnly: (value) => setReadOnly(value),
       })
@@ -87,22 +86,16 @@ export function DocumentEditor({
 
     return () => {
       active = false
-      previewReady.current = false
-      crepeRef.current = null
       void crepe.destroy()
     }
-  }, [defaultMarkdown, onReady])
-
-  useEffect(() => {
-    if (!previewReady.current || !crepeRef.current || rawMarkdown === defaultMarkdown) return
-    crepeRef.current.editor.action(replaceAll(rawMarkdown))
-  }, [rawMarkdown, defaultMarkdown])
+  }, [defaultMarkdown, onReady, rawMarkdown])
 
   const updateMarkdown = (value: string) => {
     setRawMarkdown(value)
     callbacks.current.onMarkdownChange(value)
   }
 
+  /** Reports the current textarea selection as source offsets for scope selection. */
   const updateSelection = () => {
     const textarea = textareaRef.current
     if (!textarea) return

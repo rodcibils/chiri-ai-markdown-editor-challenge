@@ -1,15 +1,16 @@
-/** Identifies whether a proposal applies to the whole document or a ProseMirror range. */
+/** Identifies the document range that a suggestion is allowed to change. */
 export type SuggestionScope =
-  | { kind: 'document' }
-  | { kind: 'selection'; from: number; to: number };
+  | { kind: 'selection'; from: number; to: number }
+  | { kind: 'insertion'; position: number }
+  | { kind: 'document' };
 
-/** A single contiguous portion of the inline review diff. */
+/** A contiguous piece of text in the computed review diff. */
 export type DiffSegment = {
   value: string;
   type: 'unchanged' | 'added' | 'removed';
-}
+};
 
-/** Immutable proposal snapshot retained until the user accepts or rejects it. */
+/** Proposal snapshot kept unchanged until the user accepts or rejects it. */
 export interface AiSuggestion {
   originalMarkdown: string;
   proposedMarkdown: string;

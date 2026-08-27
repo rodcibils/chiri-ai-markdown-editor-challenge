@@ -1,54 +1,62 @@
-import type { SuggestionProvider, SuggestionRequest } from './provider'
+import type { SuggestionProvider, SuggestionRequest } from './provider';
 
-/** Deterministic offline provider used to exercise the complete review workflow. */
+/** Offline provider with predictable, scope-aware edits for UI review. */
 export class MockSuggestionProvider implements SuggestionProvider {
-  /**
-   * Simulates an asynchronous AI call and returns Markdown-only output.
-   * Reserved instruction tokens make failure states reproducible during manual testing.
-   */
   generateSuggestion({
-    markdown,
+    documentMarkdown,
+    targetMarkdown,
     instruction,
+    scope,
     signal,
   }: SuggestionRequest): Promise<string> {
     return new Promise((resolve, reject) => {
-      let timer = 0
-
+      let timer = 0;
       const abort = () => {
-        // Match the cancellation behavior expected from a future fetch request.
-        window.clearTimeout(timer)
-        reject(new DOMException('Request aborted', 'AbortError'))
-      }
+        window.clearTimeout(timer);
+        reject(new DOMException('Request aborted', 'AbortError'));
+      };
 
       if (signal?.aborted) {
-        abort()
-        return
+        abort();
+        return;
       }
 
-      signal?.addEventListener('abort', abort, { once: true })
+      signal?.addEventListener('abort', abort, { once: true });
       timer = window.setTimeout(() => {
         signal?.removeEventListener('abort', abort);
-
         const command = instruction.trim().toLowerCase();
+
         if (command.includes('[mock:error]')) {
-          reject(new Error('Mock AI service unavailable.'))
+          reject(new Error('Mock AI service unavailable.'));
           return;
         }
         if (command.includes('[mock:empty]')) {
-          resolve('')
+          resolve('');
           return;
         }
         if (command.includes('[mock:unchanged]')) {
-          resolve(markdown)
+          resolve(targetMarkdown);
           return;
         }
 
-        // Appending a valid Markdown block gives the diff UI a predictable change.
-        const marker = markdown.includes('Mock revision:')
-          ? `> Refinement applied: ${instruction.trim()}`
-          : `> Mock revision: ${instruction.trim()}`
-        resolve(`${markdown}\n\n${marker}`)
+        const subject = targetMarkdown || 'this location';
+        if (command.includes('[mock:add]') || scope.kind === 'insertion') {
+          resolve(`${subject}\n\n### Suggested addition\n\nA new idea for this text.`);
+          return;
+        }
+        if (command.includes('[mock:remove]')) {
+          resolve(targetMarkdown.split(/\s+/).slice(0, 2).join(' '));
+          return;
+        }
+        if (command.includes('[mock:rewrite]')) {
+          const rewrittenSubject = subject.replace(/\b(the|a|an)\b/gi, 'this');
+          resolve(`${rewrittenSubject}\n\n> Mock rewrite applied: ${instruction.trim()}`);
+          return;
+        }
+
+        const contextHint = documentMarkdown ? `\n\n> Context reviewed: ${documentMarkdown.split('\n')[0]}` : '';
+        resolve(`${subject}\n\n> Mock revision: ${instruction.trim()}${contextHint}`);
       }, 600);
-    })
+    });
   }
 }
