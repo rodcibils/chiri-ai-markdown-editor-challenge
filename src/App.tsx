@@ -15,7 +15,10 @@ import {
   findHistoryEntry,
   initialDocumentHistoryState,
 } from './history/documentHistory';
-import { browserHistoryEnvironment } from './history/historyEnvironment';
+import {
+  browserHistoryEnvironment,
+  type HistoryEnvironment,
+} from './history/historyEnvironment';
 import type {
   AiHistoryEntry,
   AiSuggestion,
@@ -24,9 +27,21 @@ import type {
 } from './types';
 import './App.css';
 
-const initialMarkdown = `# Welcome
+const defaultInitialMarkdown = `# Welcome
 
 Start writing here. Pause at the cursor or select text to ask for an AI idea.`;
+
+const defaultSuggestionProvider = new MockSuggestionProvider();
+
+/** Injectable application dependencies used by production and deterministic tests. */
+export interface AppProps {
+  /** Provider used for suggestion generation; mock by default in this stage. */
+  suggestionProvider?: SuggestionProvider;
+  /** Clock and ID boundary used when successful changes enter history. */
+  historyEnvironment?: HistoryEnvironment;
+  /** Markdown loaded into the editor on its first render. */
+  initialMarkdown?: string;
+}
 
 type AiView =
   | { kind: 'prompt' }
@@ -78,7 +93,11 @@ interface ReviewViewProps {
 }
 
 /** Coordinates the full-screen editor and contextual AI suggestion workflow. */
-function App() {
+function App({
+  suggestionProvider = defaultSuggestionProvider,
+  historyEnvironment = browserHistoryEnvironment,
+  initialMarkdown = defaultInitialMarkdown,
+}: AppProps = {}) {
   const editorRef = useRef<EditorBridge | null>(null);
   const historyButtonRef = useRef<HTMLButtonElement>(null);
   const requestId = useRef(0);
@@ -86,9 +105,9 @@ function App() {
   const activeHistorySessionId = useRef<string | null>(null);
   const nextHistoryStep = useRef(0);
   const historySequence = useRef(0);
-  const provider = useMemo<SuggestionProvider>(
-    () => new MockSuggestionProvider(),
-    [],
+  const provider = useMemo(
+    () => suggestionProvider,
+    [suggestionProvider],
   );
 
   const [dialog, setDialog] = useState<DialogState>({ kind: 'closed' });
@@ -115,7 +134,7 @@ function App() {
 
   /** Opens a scope-specific prompt from an immutable editor snapshot. */
   const openAiDialog = useCallback((trigger: ContextualAiTrigger) => {
-    const sessionId = browserHistoryEnvironment.createId();
+    const sessionId = historyEnvironment.createId();
     const nextScope: SuggestionScope = trigger.kind === 'selection'
       ? { kind: 'selection', from: trigger.from, to: trigger.to }
       : { kind: 'insertion', position: trigger.position };
@@ -132,7 +151,7 @@ function App() {
     setError('');
     setDialog({ kind: 'ai', view: { kind: 'prompt' } });
     editorRef.current?.setReadOnly(true);
-  }, []);
+  }, [historyEnvironment]);
 
   /** Clears an AI session and optionally restores its captured source range. */
   const closeAiDialog = (
@@ -205,9 +224,9 @@ function App() {
 
     historySequence.current += 1;
     const entry: AiHistoryEntry = {
-      id: browserHistoryEnvironment.createId(),
+      id: historyEnvironment.createId(),
       sequence: historySequence.current,
-      createdAt: browserHistoryEnvironment.now(),
+      createdAt: historyEnvironment.now(),
       prompt: submittedPrompt,
       inputMarkdown,
       outputMarkdown,
@@ -369,7 +388,7 @@ function App() {
       <DocumentEditor
         defaultMarkdown={initialMarkdown}
         contextualActionsEnabled={dialog.kind === 'closed'}
-        onReady={handleEditorReady}
+      onReady={handleEditorReady}
         onAiTrigger={openAiDialog}
       />
 

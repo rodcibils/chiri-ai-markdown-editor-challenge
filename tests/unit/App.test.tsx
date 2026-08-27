@@ -1,0 +1,162 @@
+import { useEffect } from 'react';
+import { render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { describe, expect, it, vi } from 'vitest';
+
+import App from '../../src/App';
+
+const mocks = vi.hoisted(() => ({
+  bridge: {
+    replaceDocument: vi.fn(),
+    replaceSelection: vi.fn(),
+    setReadOnly: vi.fn(),
+    restoreSelection: vi.fn(),
+  },
+}));
+
+vi.mock('../../src/components/DocumentEditor', () => ({
+  DocumentEditor: ({
+    onReady,
+    onAiTrigger,
+  }: {
+    onReady: (bridge: typeof mocks.bridge) => void;
+    onAiTrigger: (trigger: {
+      kind: 'insertion';
+      documentMarkdown: string;
+      position: number;
+    }) => void;
+  }) => {
+    useEffect(() => {
+      onReady(mocks.bridge);
+    }, [onReady]);
+
+    return (
+      <button
+        type="button"
+        onClick={() =>
+          onAiTrigger({
+            kind: 'insertion',
+            documentMarkdown: '# Test document',
+            position: 0,
+          })
+        }
+      >
+        Ask AI at cursor
+      </button>
+    );
+  },
+}));
+
+describe('App AI workflow', () => {
+  it('accepts a mocked suggestion and exposes it in document history', async () => {
+    const user = userEvent.setup();
+    const provider = {
+      generateSuggestion: vi.fn().mockResolvedValue('A generated idea'),
+    };
+    const historyEnvironment = {
+      now: vi.fn().mockReturnValue(100),
+      createId: vi
+        .fn()
+        .mockReturnValueOnce('session-1')
+        .mockReturnValueOnce('entry-1'),
+    };
+
+    render(
+      <App
+        suggestionProvider={provider}
+        historyEnvironment={historyEnvironment}
+        initialMarkdown="# Test document"
+      />,
+    );
+
+    await user.click(screen.getByRole('button', { name: 'Ask AI at cursor' }));
+    await user.type(screen.getByLabelText('What would you like to write next?'), 'Add an idea');
+    await user.click(screen.getByRole('button', { name: 'Generate idea' }));
+
+    expect(await screen.findByText('A generated idea')).toBeInTheDocument();
+    expect(provider.generateSuggestion).toHaveBeenCalledWith(
+      expect.objectContaining({
+        documentMarkdown: '# Test document',
+        targetMarkdown: '',
+        instruction: 'Add an idea',
+        scope: { kind: 'insertion', position: 0 },
+      }),
+    );
+
+    await user.click(screen.getByRole('button', { name: 'Accept' }));
+    expect(mocks.bridge.replaceSelection).toHaveBeenCalledWith(
+      'A generated idea',
+      { from: 0, to: 0 },
+    );
+
+    await user.click(screen.getByRole('button', { name: /Open document history/ }));
+    await user.click(screen.getByRole('button', { name: /Add an idea/ }));
+    expect(screen.getByText('A generated idea')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Back to history' })).toBeInTheDocument();
+  });
+
+  it('keeps the prompt after a provider error so the user can retry', async () => {
+    const user = userEvent.setup();
+    const provider = {
+      generateSuggestion: vi
+        .fn()
+        .mockRejectedValueOnce(new Error('Offline test failure'))
+        .mockResolvedValueOnce('Recovered suggestion'),
+    };
+
+    render(<App suggestionProvider={provider} />);
+    await user.click(screen.getByRole('button', { name: 'Ask AI at cursor' }));
+    const prompt = screen.getByLabelText('What would you like to write next?');
+    await user.type(prompt, 'Keep this prompt');
+    await user.click(screen.getByRole('button', { name: 'Generate idea' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Offline test failure');
+    expect(prompt).toHaveValue('Keep this prompt');
+    await user.click(screen.getByRole('button', { name: 'Generate idea' }));
+    expect(await screen.findByText('Recovered suggestion')).toBeInTheDocument();
+  });
+
+  it('rejects a suggestion without recording history and refines from the latest proposal', async () => {
+    const user = userEvent.setup();
+    const provider = {
+      generateSuggestion: vi
+        .fn()
+        .mockResolvedValueOnce('Initial proposal')
+        .mockResolvedValueOnce('Refined proposal'),
+    };
+    const historyEnvironment = {
+      now: vi.fn().mockReturnValue(100),
+      createId: vi
+        .fn()
+        .mockReturnValueOnce('session-2')
+        .mockReturnValueOnce('entry-initial')
+        .mockReturnValueOnce('entry-refined'),
+    };
+
+    const { unmount } = render(
+      <App
+        suggestionProvider={provider}
+        historyEnvironment={historyEnvironment}
+      />,
+    );
+    await user.click(screen.getByRole('button', { name: 'Ask AI at cursor' }));
+    await user.type(screen.getByLabelText('What would you like to write next?'), 'Start a section');
+    await user.click(screen.getByRole('button', { name: 'Generate idea' }));
+    await screen.findByText('Initial proposal');
+    await user.click(screen.getByRole('button', { name: 'Refine' }));
+    await user.type(screen.getByLabelText('How should the proposal change?'), 'Make it shorter');
+    await user.click(screen.getByRole('button', { name: 'Refine suggestion' }));
+    await screen.findByText('Refined proposal');
+
+    expect(provider.generateSuggestion).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        targetMarkdown: 'Initial proposal',
+        instruction: 'Make it shorter',
+      }),
+    );
+    await user.click(screen.getByRole('button', { name: 'Reject' }));
+    await user.click(screen.getByRole('button', { name: /Open document history/ }));
+    expect(screen.getByText(/Accepted AI changes will appear here/)).toBeInTheDocument();
+    unmount();
+  });
+});
