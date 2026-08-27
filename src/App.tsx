@@ -1,6 +1,6 @@
 import { useCallback, useMemo, useReducer, useRef, useState } from 'react';
 
-import { MockSuggestionProvider } from './ai/mockProvider';
+import { HttpSuggestionProvider } from './ai/httpProvider';
 import type { SuggestionProvider } from './ai/provider';
 import { DocumentHistoryModal } from './components/DocumentHistoryModal';
 import { DocumentEditor } from './components/DocumentEditor';
@@ -31,11 +31,11 @@ const defaultInitialMarkdown = `# Welcome
 
 Start writing here. Pause at the cursor or select text to ask for an AI idea.`;
 
-const defaultSuggestionProvider = new MockSuggestionProvider();
+const defaultSuggestionProvider = new HttpSuggestionProvider();
 
 /** Injectable application dependencies used by production and deterministic tests. */
 export interface AppProps {
-  /** Provider used for suggestion generation; mock by default in this stage. */
+  /** Provider used for suggestion generation; production uses the server proxy. */
   suggestionProvider?: SuggestionProvider;
   /** Clock and ID boundary used when successful changes enter history. */
   historyEnvironment?: HistoryEnvironment;
@@ -239,7 +239,7 @@ function App({
     dispatchHistory({ type: 'append-pending', entry });
   };
 
-  /** Sends either the captured target or latest proposal to the mock provider. */
+  /** Sends either the captured target or latest proposal to the configured provider. */
   const requestSuggestion = async (
     input: string,
     mode: 'initial' | 'refinement',
@@ -565,15 +565,6 @@ function PromptView({
       />
 
       <p className="scope-note">{copy.scopeNote}</p>
-      <p className="mock-help">
-        Offline mock commands: <code>[mock:add]</code>{' '}
-        <code>[mock:remove]</code>{' '}
-        <code>[mock:rewrite]</code>{' '}
-        <code>[mock:error]</code>{' '}
-        <code>[mock:empty]</code>{' '}
-        <code>[mock:unchanged]</code>
-      </p>
-
       {error && (
         <p className="modal-error" role="alert">
           {error}

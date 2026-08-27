@@ -45,13 +45,6 @@ export function HelpModal({ onClose }: HelpModalProps) {
               document changes.
             </span>
           </li>
-          <li>
-            <strong>Offline mode</strong>
-            <span>
-              Suggestions currently use the local mock provider. Its test
-              commands are listed in the AI prompt.
-            </span>
-          </li>
         </ol>
 
         <div className="modal-actions help-actions">

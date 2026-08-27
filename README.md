@@ -1,16 +1,19 @@
 # Chiri AI Document Editor
 
-A single-page Markdown editor where users ask a local mock AI collaborator to propose changes to the whole document or a selected passage. Every proposal is shown as an inline diff and must be explicitly accepted or rejected.
+A single-page Markdown editor where users ask an AI collaborator to propose
+changes at the cursor or for selected text. Every proposal is shown as a diff
+and must be explicitly accepted or rejected.
 
-## Stage 1 features
+## Features
 
 - Milkdown Crepe Markdown editing
 - Whole-document and selection-based suggestions
 - Inline added/removed diff review
 - Accept, reject, and multi-turn refinement
+- In-memory history of accepted AI changes
 - Read-only review mode to prevent stale proposals
-- Deterministic offline mock provider
-- Mock error, empty-response, and unchanged-response scenarios
+- Server-protected OpenRouter suggestions
+- Deterministic mock provider for automated tests
 
 ## Run locally
 
@@ -19,9 +22,58 @@ npm install
 npm run dev
 ```
 
-Use a current Node.js LTS release. Stage 1 does not require an API key and makes no AI network requests.
+Use a current Node.js LTS release.
 
-## Test mock states
+## OpenRouter API key setup
+
+Each developer configures their own OpenRouter key as follows:
+
+1. Copy the safe environment template:
+
+   ```bash
+   cp .env.example .env.local
+   ```
+
+2. Open `.env.local` and configure the required server-only values:
+
+   ```dotenv
+   OPENROUTER_API_KEY=
+   OPENROUTER_MODEL=
+   ```
+
+   Paste your own key after the first `=` and choose a current model slug from the
+   [OpenRouter model catalog](https://openrouter.ai/models).
+
+3. Optionally adjust the app-attribution values:
+
+   ```dotenv
+   OPENROUTER_SITE_URL=http://localhost:5173
+   OPENROUTER_APP_NAME=Chiri AI Document Editor
+   ```
+
+4. Confirm Git ignores the local secret file before committing:
+
+   ```bash
+   git check-ignore -v .env.local
+   git status --short
+   ```
+
+`OPENROUTER_API_KEY` must never use a `VITE_` prefix. Vite exposes `VITE_*`
+values to browser code, so an API key stored that way is public even when the
+environment file itself is ignored. The real integration will send browser
+requests to a same-origin server endpoint; only that server will read the key
+and call OpenRouter.
+
+Do not commit `.env.local`, paste the key into source code or tests, or include
+it in screenshots and logs. Configure the same variable through the deployment
+platform's encrypted secret settings for hosted environments. If a key is ever
+exposed, revoke and replace it in OpenRouter immediately; deleting it from a
+later Git commit does not make the original key safe.
+
+Automated tests use injected mock providers and intercepted local responses. They
+do not require an OpenRouter key or consume API tokens.
+
+## Offline mock states
 
 Include one of these tokens in the instruction to exercise a state:
 
@@ -29,7 +81,9 @@ Include one of these tokens in the instruction to exercise a state:
 - `[mock:empty]` - empty provider response
 - `[mock:unchanged]` - valid no-change response
 
-Any other instruction returns deterministic Markdown with a visible mock revision. Refinement adds another deterministic revision to the previous proposal.
+Any other instruction returns deterministic Markdown with a visible mock
+revision. Refinement adds another deterministic revision to the previous
+proposal.
 
 ## Architecture
 
@@ -37,18 +91,24 @@ Any other instruction returns deterministic Markdown with a visible mock revisio
 Milkdown/Crepe
   -> Markdown and selection state
   -> SuggestionProvider interface
-  -> MockSuggestionProvider (Stage 1)
+  -> HttpSuggestionProvider -> same-origin server proxy
+  -> OpenRouter chat completions
   -> diffWordsWithSpace
   -> user review
   -> explicit accept/reject
 ```
 
-The provider boundary is transport-neutral. Stage 2 can add an OpenRouter implementation without changing the editor, diff, or review workflow.
+The provider boundary is transport-neutral. Tests inject `MockSuggestionProvider`
+without changing the editor, diff, or review workflow.
 
 ## Deliberate trade-offs
 
-This showcase keeps state in memory and supports one document and one active proposal. It has no authentication, database, persistence, collaboration protocol, version history, or backend. The mock prioritizes predictable UX testing over semantic AI quality.
+This showcase keeps the document and accepted-change history in memory and
+supports one active proposal. It has no authentication, database, persistent
+storage, or multi-user collaboration protocol. The server proxy protects the
+OpenRouter key but does not provide user authentication.
 
 ## With more time
 
-Add the OpenRouter adapter behind the existing provider interface, then consider server-side key protection, persistence, version history, richer structural diffs, and tracked changes.
+Consider persistence, richer structural diffs, user authentication, and tracked
+changes.
