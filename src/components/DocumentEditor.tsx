@@ -1,4 +1,5 @@
 import { Crepe, CrepeFeature } from '@milkdown/crepe';
+import { replaceAll } from '@milkdown/kit/utils';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { measureTextareaOffset } from '../editor/measureTextareaOffset';
@@ -13,6 +14,7 @@ const TRIGGER_BUTTON_SIZE = 40;
 const TRIGGER_GAP = 8;
 const TRIGGER_EDGE_MARGIN = 8;
 const CARET_VISIBILITY_MARGIN = 32;
+const PREVIEW_UPDATE_DELAY_MS = 150;
 
 interface SelectionRange {
   from: number;
@@ -468,16 +470,39 @@ interface MarkdownPreviewProps {
   markdown: string;
 }
 
-/** Recreates the read-only Crepe view whenever the raw Markdown changes. */
+/** Maintains a read-only Crepe view and coalesces source updates. */
 function MarkdownPreview({ markdown }: MarkdownPreviewProps) {
   const previewRef = useRef<HTMLDivElement>(null);
+  const initialMarkdownRef = useRef(markdown);
+  const latestMarkdownRef = useRef(markdown);
+  const appliedMarkdownRef = useRef<string | null>(null);
+  const crepeRef = useRef<Crepe | null>(null);
+  const previewTimerRef = useRef<number | null>(null);
+  const previewReadyRef = useRef(false);
+
+  /** Replaces only the preview document while preserving its Crepe instance. */
+  const applyPreviewMarkdown = useCallback((nextMarkdown: string) => {
+    const crepe = crepeRef.current;
+    if (
+      !crepe ||
+      !previewReadyRef.current ||
+      appliedMarkdownRef.current === nextMarkdown
+    ) {
+      return;
+    }
+
+    // Flush the read-only state so preview updates do not accumulate undo history.
+    crepe.editor.action(replaceAll(nextMarkdown, true));
+    appliedMarkdownRef.current = nextMarkdown;
+  }, []);
 
   useEffect(() => {
-    if (!previewRef.current) return;
+    const root = previewRef.current;
+    if (!root) return;
 
     const crepe = new Crepe({
-      root: previewRef.current,
-      defaultValue: markdown,
+      root,
+      defaultValue: initialMarkdownRef.current,
       features: {
         [CrepeFeature.Cursor]: false,
         [CrepeFeature.ListItem]: false,
@@ -493,22 +518,69 @@ function MarkdownPreview({ markdown }: MarkdownPreviewProps) {
         [CrepeFeature.AI]: false,
       },
     });
-    let active = true;
+    let disposed = false;
+    let createSettled = false;
+    let cleanupRequested = false;
+    let destroyStarted = false;
+    crepeRef.current = crepe;
+
+    /** Destroys this lifecycle's editor at most once. */
+    const destroyOnce = () => {
+      if (destroyStarted) return;
+
+      destroyStarted = true;
+      void crepe.destroy();
+    };
 
     void crepe.create().then(() => {
-      if (!active) {
-        void crepe.destroy();
+      createSettled = true;
+      if (disposed || crepeRef.current !== crepe) {
+        destroyOnce();
         return;
       }
 
+      previewReadyRef.current = true;
       crepe.setReadonly(true);
+      appliedMarkdownRef.current = initialMarkdownRef.current;
+      applyPreviewMarkdown(latestMarkdownRef.current);
+    }).catch(() => {
+      createSettled = true;
+      if (cleanupRequested) destroyOnce();
+      // Keep the source editor usable when preview initialization fails.
     });
 
     return () => {
-      active = false;
-      void crepe.destroy();
+      disposed = true;
+      previewReadyRef.current = false;
+      if (previewTimerRef.current !== null) {
+        window.clearTimeout(previewTimerRef.current);
+        previewTimerRef.current = null;
+      }
+      if (crepeRef.current === crepe) crepeRef.current = null;
+      cleanupRequested = true;
+      if (createSettled) destroyOnce();
     };
-  }, [markdown]);
+  }, [applyPreviewMarkdown]);
+
+  useEffect(() => {
+    latestMarkdownRef.current = markdown;
+    if (!previewReadyRef.current) return;
+
+    if (previewTimerRef.current !== null) {
+      window.clearTimeout(previewTimerRef.current);
+    }
+    previewTimerRef.current = window.setTimeout(() => {
+      previewTimerRef.current = null;
+      applyPreviewMarkdown(latestMarkdownRef.current);
+    }, PREVIEW_UPDATE_DELAY_MS);
+
+    return () => {
+      if (previewTimerRef.current === null) return;
+
+      window.clearTimeout(previewTimerRef.current);
+      previewTimerRef.current = null;
+    };
+  }, [applyPreviewMarkdown, markdown]);
 
   return (
     <div
