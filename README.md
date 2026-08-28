@@ -1,6 +1,6 @@
 # Chiri AI Document Editor
 
-[▶️ Watch the demo video](https://raw.githubusercontent.com/rodcibils/chiri-ai-markdown-editor-challenge/main/docs/demo.mp4)
+https://github.com/user-attachments/assets/e9865274-0069-45c1-b2df-192c0c97c6a7
 
 Chiri is a single-page Markdown editor for working with an AI collaborator. Write raw Markdown on the left, see its rendered result on the right, and request scoped suggestions at the cursor or for selected text. Every suggestion is shown as a diff and requires explicit acceptance before changing the document.
 
