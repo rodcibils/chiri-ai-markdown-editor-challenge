@@ -45,6 +45,8 @@ type EditorTrigger = EditorTriggerDescriptor & {
 
 /** Imperative operations the parent needs after the split editor has mounted. */
 export interface EditorBridge {
+  /** Returns the exact latest raw Markdown, including committed bridge edits. */
+  getMarkdown(): string;
   /** Replace the entire raw Markdown document and focus its new endpoint. */
   replaceDocument(markdown: string): void;
   /** Replace one captured source range and focus the end of the new text. */
@@ -82,6 +84,7 @@ export function DocumentEditor({
   const readOnlyRef = useRef(false);
   const actionsEnabledRef = useRef(contextualActionsEnabled);
   const [rawMarkdown, setRawMarkdown] = useState(defaultMarkdown);
+  const latestMarkdownRef = useRef(defaultMarkdown);
   const [readOnly, setReadOnly] = useState(false);
   const [trigger, setTrigger] = useState<EditorTrigger | null>(null);
 
@@ -325,7 +328,9 @@ export function DocumentEditor({
     };
 
     onReady({
+      getMarkdown: () => latestMarkdownRef.current,
       replaceDocument: (value) => {
+        latestMarkdownRef.current = value;
         setRawMarkdown(value);
         restoreSelection({ from: value.length, to: value.length });
       },
@@ -339,6 +344,7 @@ export function DocumentEditor({
         ].join('');
         const nextPosition = range.from + value.length;
 
+        latestMarkdownRef.current = next;
         setRawMarkdown(next);
         restoreSelection({ from: nextPosition, to: nextPosition });
       },
@@ -353,6 +359,7 @@ export function DocumentEditor({
 
   /** Updates the raw source and restarts the contextual insertion countdown. */
   const updateMarkdown = (textarea: HTMLTextAreaElement) => {
+    latestMarkdownRef.current = textarea.value;
     setRawMarkdown(textarea.value);
     scheduleInsertionTrigger(textarea);
   };

@@ -45,6 +45,13 @@ export function HelpModal({ onClose }: HelpModalProps) {
               document changes.
             </span>
           </li>
+          <li>
+            <strong>Save your Markdown</strong>
+            <span>
+              Press the download icon in the header to save the current
+              Markdown document to your device.
+            </span>
+          </li>
         </ol>
 
         <div className="modal-actions help-actions">

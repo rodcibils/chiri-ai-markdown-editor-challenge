@@ -9,6 +9,7 @@ Chiri is a single-page Markdown editor for working with an AI collaborator. Writ
 - Selection/insertion scoped suggestions; use `Ctrl+A` / `Cmd+A` for the whole document.
 - Colored diff review with Accept, Reject, and iterative Refine actions.
 - In-memory history of accepted AI changes, including accepted refinements.
+- Download the current raw Markdown document as a local `chiri-document.md` file.
 - Server-protected OpenRouter integration with no API key in browser code.
 - Deterministic mock provider for offline automated tests.
 
@@ -87,6 +88,7 @@ The server serves the client from `dist/` and compiled server code from `dist-se
 5. Review the existing-versus-suggested diff. Choose **Accept**, **Reject**, or **Refine**. Refinement always starts from the latest proposal.
 6. Open **Document History** to inspect accepted AI steps. History is in memory for the current page and is ordered newest first.
 7. Open **Help** for a short explanation of the contextual controls.
+8. Press the Download icon in the header to save the current accepted raw Markdown as `chiri-document.md`. Downloading is local and does not call OpenRouter.
 
 The product intentionally sends the full document as model context even for a selection or insertion. Do not include sensitive content unless that data flow is acceptable for the configured provider.
 
@@ -126,6 +128,7 @@ The provider interface is transport-neutral. Tests inject a mock while productio
 - `src/history/` — pure in-memory history reducer and formatting.
 - `src/diff/` — pure Markdown diff computation.
 - `src/editor/` — textarea caret and selection measurement.
+- `src/download/` — client-only Markdown Blob download utility.
 - `src/types.ts` — shared client domain types.
 - `server/` — Express routes, validation, prompt construction, configuration, and OpenRouter client.
 - `tests/unit/` — Vitest unit/component tests; these are offline only.

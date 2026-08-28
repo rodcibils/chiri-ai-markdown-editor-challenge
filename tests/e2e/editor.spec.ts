@@ -1,3 +1,5 @@
+import { readFile } from 'node:fs/promises';
+
 import { expect, test } from '@playwright/test';
 
 test.beforeEach(async ({ context }) => {
@@ -31,6 +33,25 @@ test('renders the raw editor and updates the real Markdown preview', async ({
 
   await expect(preview).toContainText('Browser test heading');
   await expect(preview).toContainText('bold browser text');
+});
+
+test('downloads the exact current raw Markdown without external requests', async ({
+  page,
+}) => {
+  await page.goto('/');
+
+  const source = page.getByRole('textbox', { name: 'Raw Markdown source' });
+  const markdown = '# Café\n\n- first\n- second\n';
+  await source.fill(markdown);
+
+  const downloadPromise = page.waitForEvent('download');
+  await page.getByRole('button', { name: 'Download Markdown document' }).click();
+  const download = await downloadPromise;
+
+  expect(download.suggestedFilename()).toBe('chiri-document.md');
+  const downloadPath = await download.path();
+  expect(downloadPath).not.toBeNull();
+  await expect.poll(async () => readFile(downloadPath!, 'utf8')).toBe(markdown);
 });
 
 test('opens help and empty document history without external requests', async ({

@@ -148,14 +148,18 @@ describe('DocumentEditor', () => {
     );
 
     const bridge = onReady.mock.calls[0][0] as {
+      getMarkdown: () => string;
       replaceSelection: (value: string, range: { from: number; to: number }) => void;
       replaceDocument: (value: string) => void;
       setReadOnly: (value: boolean) => void;
     };
+    expect(bridge.getMarkdown()).toBe('hello world');
     act(() => bridge.replaceSelection('hi', { from: 0, to: 5 }));
     expect(textarea).toHaveValue('hi world');
+    expect(bridge.getMarkdown()).toBe('hi world');
     act(() => bridge.replaceDocument('replacement'));
     expect(textarea).toHaveValue('replacement');
+    expect(bridge.getMarkdown()).toBe('replacement');
     act(() => bridge.setReadOnly(true));
     expect(textarea).toHaveAttribute('readonly');
   });

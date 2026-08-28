@@ -12,6 +12,10 @@ describe('HelpModal', () => {
 
     expect(screen.getByText('Continue writing')).toBeInTheDocument();
     expect(screen.getByText('Improve text')).toBeInTheDocument();
+    expect(screen.getByText('Save your Markdown')).toBeInTheDocument();
+    expect(
+      screen.getByText(/download icon in the header/i),
+    ).toBeInTheDocument();
     expect(screen.queryByText(/OpenRouter API key/i)).not.toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Got it' }));
     expect(onClose).toHaveBeenCalledOnce();

@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -7,11 +7,13 @@ import App from '../../src/App';
 
 const mocks = vi.hoisted(() => ({
   bridge: {
+    getMarkdown: vi.fn(() => '# Test document'),
     replaceDocument: vi.fn(),
     replaceSelection: vi.fn(),
     setReadOnly: vi.fn(),
     restoreSelection: vi.fn(),
   },
+  downloadMarkdown: vi.fn(),
 }));
 
 vi.mock('../../src/components/DocumentEditor', () => ({
@@ -47,7 +49,46 @@ vi.mock('../../src/components/DocumentEditor', () => ({
   },
 }));
 
+vi.mock('../../src/download/downloadMarkdown', () => ({
+  downloadMarkdown: mocks.downloadMarkdown,
+}));
+
 describe('App AI workflow', () => {
+  it('downloads the exact current Markdown through the editor bridge', async () => {
+    const user = userEvent.setup();
+    mocks.bridge.getMarkdown.mockReturnValue('### Current source\n\n✓ saved');
+    render(<App />);
+
+    const downloadButton = await screen.findByRole('button', {
+      name: 'Download Markdown document',
+    });
+    await waitFor(() => expect(downloadButton).toBeEnabled());
+    await user.click(downloadButton);
+
+    expect(mocks.bridge.getMarkdown).toHaveBeenCalledOnce();
+    expect(mocks.downloadMarkdown).toHaveBeenCalledWith(
+      '### Current source\n\n✓ saved',
+    );
+  });
+
+  it('disables download while a modal is open and does not call the provider', async () => {
+    const user = userEvent.setup();
+    const provider = { generateSuggestion: vi.fn() };
+    render(<App suggestionProvider={provider} />);
+
+    await waitFor(() =>
+      expect(
+        screen.getByRole('button', { name: 'Download Markdown document' }),
+      ).toBeEnabled(),
+    );
+    await user.click(screen.getByRole('button', { name: 'Open editor help' }));
+
+    expect(
+      screen.getByRole('button', { name: 'Download Markdown document' }),
+    ).toBeDisabled();
+    expect(provider.generateSuggestion).not.toHaveBeenCalled();
+  });
+
   it('accepts a mocked suggestion and exposes it in document history', async () => {
     const user = userEvent.setup();
     const provider = {

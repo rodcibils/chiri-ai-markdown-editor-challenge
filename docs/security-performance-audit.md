@@ -1,6 +1,6 @@
 # Security and Performance Audit
 
-Date: 2026-08-27
+Date: 2026-08-28
 
 ## Executive summary
 
@@ -66,10 +66,10 @@ Observed results:
 - dependency resolution: passed;
 - lint: passed;
 - production build: passed without a chunk-size warning;
-- unit/component tests: 51 passed across 19 files;
-- client coverage: 83.84% statements, 73.85% branches, 83.33% functions,
-  and 85.85% lines;
-- browser tests: 12 passed across Chromium, Firefox, WebKit, and mobile Chromium;
+- unit/component tests: 56 passed across 20 files;
+- client coverage: 84.61% statements, 74.14% branches, 84.80% functions,
+  and 86.70% lines;
+- browser tests: 16 passed across Chromium, Firefox, WebKit, and mobile Chromium;
 - eager production assets referenced by `dist/index.html`: 23 files,
   1,700,602 raw bytes (about 1.66 MiB) and 532,085 gzip bytes (about 520 KiB);
 - only the empty `.env.example` template is tracked; and
@@ -606,6 +606,8 @@ general performance budget, but editor recreation is no longer an open defect.
   application risk.
 - Generated text is displayed as a diff and applied only after explicit user
   acceptance.
+- Markdown export is client-only, preserves the exact accepted source text, and
+  introduces no provider request, persistence, or new dependency.
 - No application use of `dangerouslySetInnerHTML`, `eval`, `new Function`, or
   `document.write` was found.
 - Lint, build, unit/component tests, and the four-project browser suite pass.

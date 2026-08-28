@@ -8,9 +8,10 @@ import { DocumentEditor } from './components/DocumentEditor';
 import type { EditorBridge } from './components/DocumentEditor';
 import { HelpModal } from './components/HelpModal';
 import { HistoryDetailModal } from './components/HistoryDetailModal';
-import { InfoIcon } from './components/icons';
+import { DownloadIcon, InfoIcon } from './components/icons';
 import { ModalFrame } from './components/ModalFrame';
 import { SuggestionDiff } from './components/SuggestionDiff';
+import { downloadMarkdown } from './download/downloadMarkdown';
 import {
   documentHistoryReducer,
   findHistoryEntry,
@@ -118,6 +119,7 @@ function App({
   );
   const [activeTrigger, setActiveTrigger] =
     useState<ContextualAiTrigger | null>(null);
+  const [editorReady, setEditorReady] = useState(false);
   const [contextMarkdown, setContextMarkdown] = useState(initialMarkdown);
   const [scope, setScope] = useState<SuggestionScope>({
     kind: 'insertion',
@@ -131,6 +133,15 @@ function App({
   /** Stores the editor bridge without changing identity on parent renders. */
   const handleEditorReady = useCallback((bridge: EditorBridge) => {
     editorRef.current = bridge;
+    setEditorReady(true);
+  }, []);
+
+  /** Downloads the exact accepted Markdown currently held by the editor. */
+  const handleMarkdownDownload = useCallback(() => {
+    const markdown = editorRef.current?.getMarkdown();
+    if (markdown === undefined) return;
+
+    downloadMarkdown(markdown);
   }, []);
 
   /** Opens a scope-specific prompt from an immutable editor snapshot. */
@@ -370,6 +381,16 @@ function App({
             }
           >
             <span>Document History</span>
+          </button>
+          <button
+            type="button"
+            className="header-icon-button"
+            aria-label="Download Markdown document"
+            title="Download Markdown"
+            disabled={!editorReady || dialog.kind !== 'closed'}
+            onClick={handleMarkdownDownload}
+          >
+            <DownloadIcon className="header-icon" />
           </button>
           <button
             type="button"

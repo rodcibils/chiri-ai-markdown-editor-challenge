@@ -25,6 +25,7 @@ Important directories:
 - `src/history/` — pure in-memory history reducer and environment boundary.
 - `src/diff/` — Markdown comparison logic.
 - `src/editor/` — textarea caret/selection measurement.
+- `src/download/` — client-only exact-Markdown download utility.
 - `server/` — validation, prompt construction, OpenRouter client, and Express
   routes.
 - `tests/unit/` — Vitest tests that must not call the real network.
@@ -60,6 +61,11 @@ Preserve these boundaries unless the task explicitly changes them:
 9. Markdown must be rendered through the existing safe editor/rendering path.
    Do not introduce `dangerouslySetInnerHTML`, `eval`, `new Function`, or raw
    HTML injection for convenience.
+10. File export is browser-only and must preserve the exact raw Markdown. Do not
+    send downloads through the API or include pending AI state, rendered HTML,
+    prompts, or history metadata.
+11. Download helpers must clean up temporary anchors and revoke object URLs after
+    the browser has received the download request.
 
 ## Code style and readability
 
@@ -134,6 +140,7 @@ scan comments for stale names, limits, or behavior.
   token totals.
 - Treat Markdown and model output as untrusted data. Explicit user review is
   required before applying AI output.
+- Keep the download boundary easy to mock; it must not perform external requests.
 
 ## Testing and verification
 
